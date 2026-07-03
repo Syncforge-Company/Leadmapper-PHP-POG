@@ -1,0 +1,9 @@
+{
+  "name": "syncforge/leadmapper",
+  "description": "LeadMapper Manaus em PHP com busca local via SerpAPI",
+  "type": "project",
+  "require": {},
+  "scripts": {
+    "dev": "php -S localhost:8000 -t ."
+  }
+}
