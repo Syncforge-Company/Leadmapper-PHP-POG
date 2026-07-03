@@ -4,6 +4,7 @@
   "type": "project",
   "require": {},
   "scripts": {
-    "dev": "php -S localhost:8000 -t ."
+    "dev": "powershell -ExecutionPolicy Bypass -File scripts/dev.ps1",
+    "dev:stop": "powershell -ExecutionPolicy Bypass -File scripts/dev-stop.ps1"
   }
 }

@@ -69,6 +69,14 @@ Na pasta do projeto:
 composer dev
 ```
 
+Esse comando inicia o servidor em background e retorna imediatamente, evitando timeout em processos longos.
+
+Para parar o servidor:
+
+```powershell
+composer dev:stop
+```
+
 Alternativa sem Composer:
 
 ```powershell
