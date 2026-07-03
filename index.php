@@ -133,6 +133,23 @@ if (isset($_GET["api"])) {
       ]);
     }
 
+    if ($_GET["api"] === "study") {
+      $payload = json_decode(
+        file_get_contents("php://input") ?: "{}",
+        true,
+        512,
+        JSON_THROW_ON_ERROR,
+      );
+      if (!is_array($payload) || empty($payload["lead"]["name"])) {
+        http_response_code(400);
+        sendJson(["error" => "Lead invalido para gerar estudo."]);
+      }
+
+      sendJson([
+        "study" => buildCompanyStudy($payload["lead"]),
+      ]);
+    }
+
     http_response_code(404);
     sendJson(["error" => "Endpoint nao encontrado."]);
   } catch (Throwable $e) {
@@ -143,7 +160,12 @@ if (isset($_GET["api"])) {
 
 function sendJson(array $payload): void
 {
-  echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+  echo json_encode(
+    $payload,
+    JSON_UNESCAPED_UNICODE |
+      JSON_UNESCAPED_SLASHES |
+      JSON_INVALID_UTF8_SUBSTITUTE,
+  );
   exit();
 }
 
@@ -260,7 +282,7 @@ function fetchSerpApiLeads(
 function mapSerpApiPlaceToLead(array $place, array $fallbackCategory, array $categories): array
 {
   $website = (string) ($place["website"] ?? "");
-  $phone = (string) ($place["phone"] ?? "");
+  $phone = normalizeLeadPhone((string) ($place["phone"] ?? ""));
   $rawType = $place["type"] ?? $fallbackCategory["value"];
   $categoryName = is_array($rawType)
     ? normalizePlaceType((string) ($rawType[0] ?? $fallbackCategory["value"]))
@@ -307,6 +329,43 @@ function normalizePlaceType(string $value): string
   return str_replace(" ", "_", mb_strtolower(trim($value)));
 }
 
+function normalizeLeadPhone(string $value): string
+{
+  $digits = preg_replace('/\D+/', '', trim($value)) ?? '';
+  if ($digits === '') {
+    return '';
+  }
+
+  if (str_starts_with($digits, '55') && strlen($digits) >= 12) {
+    $digits = substr($digits, 2);
+  }
+
+  return formatBrazilPhone($digits);
+}
+
+function formatBrazilPhone(string $digits): string
+{
+  if (strlen($digits) === 11) {
+    return sprintf(
+      '(%s) %s-%s',
+      substr($digits, 0, 2),
+      substr($digits, 2, 5),
+      substr($digits, 7, 4),
+    );
+  }
+
+  if (strlen($digits) === 10) {
+    return sprintf(
+      '(%s) %s-%s',
+      substr($digits, 0, 2),
+      substr($digits, 2, 4),
+      substr($digits, 6, 4),
+    );
+  }
+
+  return $digits;
+}
+
 function resolveCategoryLabel(
   string $primaryType,
   array $fallbackCategory,
@@ -324,70 +383,694 @@ function resolveCategoryLabel(
 function inferIntent(string $type, string $categoryLabel): string
 {
   $map = [
-    "restaurant" => "Atrair reservas, pedidos e mais fluxo no horario de pico.",
+    "restaurant" => "atrair mais reservas, pedidos e movimento nos horários de pico",
     "doctor" =>
-      "Converter pesquisas locais em agendamentos e transmitir confianca.",
-    "dentist" => "Gerar consultas particulares e destacar especialidades.",
-    "lawyer" => "Captar contatos qualificados e reforcar autoridade.",
-    "pharmacy" => "Estimular pedidos rapidos e localizacao facil da loja.",
-    "car_repair" => "Receber orcamentos e organizar atendimento de servicos.",
-    "clothing_store" => "Aumentar visitas e campanhas de colecoes sazonais.",
-    "lodging" => "Receber reservas diretas sem depender apenas de OTAs.",
-    "beauty_salon" => "Facilitar agendamento e aumentar frequencia de retorno.",
+      "transformar pesquisas locais em agendamentos e transmitir mais confiança",
+    "dentist" => "gerar mais consultas particulares e valorizar os principais tratamentos",
+    "lawyer" => "captar contatos mais qualificados e reforçar autoridade",
+    "pharmacy" => "estimular pedidos rápidos e facilitar o contato com a loja",
+    "car_repair" => "receber mais pedidos de orçamento e organizar melhor o atendimento",
+    "clothing_store" => "aumentar visitas e dar mais força para campanhas e coleções",
+    "lodging" => "receber mais reservas diretas sem depender só de plataformas externas",
+    "beauty_salon" => "facilitar agendamentos e aumentar a recorrência dos clientes",
     "accounting" =>
-      "Captar empresas locais interessadas em suporte recorrente.",
-    "pet_store" => "Trazer pedidos, banhos e servicos recorrentes.",
-    "gym" => "Converter interessados em matriculas e aulas experimentais.",
-    "supermarket" => "Promover ofertas locais e fidelizacao recorrente.",
+      "atrair empresas locais interessadas em suporte recorrente",
+    "pet_store" => "gerar mais pedidos e fortalecer a procura por serviços recorrentes",
+    "gym" => "transformar interesse em matrículas e aulas experimentais",
+    "supermarket" => "divulgar melhor ofertas locais e incentivar a fidelização",
   ];
 
   return $map[$type] ??
-    "Atrair mais clientes para " .
-      mb_strtolower($categoryLabel) .
-      " e melhorar a conversao digital.";
+    "atrair mais clientes e melhorar a conversão digital";
 }
 
 function inferSalesAngle(string $type, bool $hasWebsite): string
 {
   $fallback = $hasWebsite
-    ? "Modernizacao do site atual com foco em conversao e captacao."
-    : "Criacao de landing page enxuta com foco em captacao imediata.";
+    ? "modernizar o site atual com foco em conversão e captação"
+    : "criar uma landing page enxuta, clara e focada em captação";
 
   $map = [
-    "restaurant" => "Landing page com cardapio, rota e botao de pedido.",
-    "doctor" => "Landing page com especialidades, prova social e agendamento.",
-    "dentist" => "Pagina com tratamentos, antes e depois e agendamento.",
+    "restaurant" => "criar uma landing page com cardápio, rota e botão de pedido",
+    "doctor" => "criar uma landing page com especialidades, prova social e agendamento",
+    "dentist" => "criar uma página com tratamentos, autoridade e agendamento facilitado",
     "lawyer" =>
-      "Pagina institucional com areas de atuacao e captacao por WhatsApp.",
-    "pharmacy" => "Pagina com catalogo basico e canal rapido de atendimento.",
+      "criar uma página institucional com áreas de atuação e captação por WhatsApp",
+    "pharmacy" => "criar uma página com catálogo básico e canal rápido de atendimento",
     "car_repair" =>
-      "Sistema simples para orcamento, checklist e retorno ao cliente.",
+      "montar uma estrutura simples para orçamento, checklist e retorno ao cliente",
     "clothing_store" =>
-      "Landing page para colecao, ofertas e catalogo por WhatsApp.",
-    "lodging" => "Pagina com quartos, pacote e reserva direta.",
-    "beauty_salon" => "Agenda online e promocao de servicos recorrentes.",
-    "accounting" => "Landing page consultiva com formularios de qualificacao.",
-    "pet_store" => "Pagina com servicos, banho/tosa e planos recorrentes.",
-    "gym" => "Landing page com planos, aulas e teste gratis.",
-    "supermarket" => "Pagina para encartes e campanhas geolocalizadas.",
+      "criar uma landing page para coleções, ofertas e catálogo por WhatsApp",
+    "lodging" => "criar uma página com quartos, pacotes e reserva direta",
+    "beauty_salon" => "organizar uma agenda online e divulgar melhor os serviços recorrentes",
+    "accounting" => "criar uma Landing Page consultiva com formulário de qualificação",
+    "pet_store" => "criar uma página com serviços, banho e tosa e planos recorrentes",
+    "gym" => "criar uma landing page com planos, aulas e teste experimental",
+    "supermarket" => "criar uma página para encartes e campanhas geolocalizadas",
   ];
 
   return $map[$type] ?? $fallback;
 }
 
+function cleanProposalFragment(string $value): string
+{
+  return trim((string) preg_replace('/[\s\.,;:!?]+$/u', '', trim($value)));
+}
+
+function inferSalesExplanation(string $type, bool $hasWebsite): string
+{
+  $fallback = $hasWebsite
+    ? "Na prática, isso significa reorganizar a estrutura atual para deixar mais claro quem a empresa é, o que oferece e qual o melhor caminho para o cliente entrar em contato."
+    : "Na prática, isso significa criar uma página objetiva, leve e direta, apresentando a empresa, os serviços, os diferenciais e um caminho simples para o cliente falar com vocês pelo WhatsApp.";
+
+  $map = [
+    "restaurant" => "Na prática, seria uma página enxuta mostrando o cardápio, a localização, os principais diferenciais e um botão direto para pedido ou atendimento no WhatsApp.",
+    "doctor" => "Na prática, seria uma página clara e profissional mostrando especialidades, credibilidade, formas de atendimento e um caminho simples para agendamento.",
+    "dentist" => "Na prática, seria uma página apresentando os tratamentos, os diferenciais da clínica e um caminho direto para avaliação ou agendamento.",
+    "lawyer" => "Na prática, seria uma página institucional mais clara, mostrando áreas de atuação, autoridade e um canal direto para contato.",
+    "pharmacy" => "Na prática, seria uma página simples para apresentar a loja, facilitar o atendimento e orientar rapidamente quem procura produtos ou suporte.",
+    "car_repair" => "Na prática, seria uma estrutura simples para apresentar os serviços, passar confiança e facilitar pedidos de orçamento pelo WhatsApp.",
+    "clothing_store" => "Na prática, seria uma página para apresentar coleções, ofertas e facilitar o contato de quem quer comprar ou tirar dúvidas rapidamente.",
+    "lodging" => "Na prática, seria uma página para mostrar quartos, diferenciais, localização e facilitar reservas diretas com menos atrito.",
+    "beauty_salon" => "Na prática, seria uma página para apresentar serviços, reforçar os diferenciais do atendimento e facilitar agendamentos.",
+    "accounting" => "Na prática, seria uma página mais consultiva, explicando os serviços, transmitindo confiança e facilitando o contato de empresas interessadas.",
+    "pet_store" => "Na prática, seria uma página para mostrar serviços, produtos e facilitar o contato de clientes que querem comprar ou agendar atendimento.",
+    "gym" => "Na prática, seria uma página para apresentar planos, aulas, estrutura e facilitar o contato de quem quer fazer uma aula experimental ou matrícula.",
+    "supermarket" => "Na prática, seria uma página para divulgar ofertas, encartes e campanhas de forma simples e fácil de acessar.",
+  ];
+
+  return $map[$type] ?? $fallback;
+}
+
+function buildCompanyStudy(array $lead): array
+{
+  $name = (string) ($lead["name"] ?? "Empresa");
+  $type = normalizePlaceType((string) ($lead["category"] ?? "all"));
+  $website = (string) ($lead["website"] ?? "");
+  $intent = cleanProposalFragment(
+    mb_strtolower((string) ($lead["intent"] ?? "atrair mais clientes")),
+  );
+  $salesAngle = cleanProposalFragment(
+    mb_strtolower(
+      (string) ($lead["salesAngle"] ?? "criar uma estrutura digital mais eficiente"),
+    ),
+  );
+  $profile = resolveStudyProfile($type);
+  $websiteStudy = analyzeLeadWebsite($website);
+  $palette = buildStudyPalette($websiteStudy["colors"], $profile["palette"]);
+  $siteSummary = buildWebsiteStudySummary($websiteStudy, $website !== "");
+  $visualDirection = buildVisualDirectionSummary($websiteStudy, $palette, $profile);
+  $prompt = buildStudyPrompt(
+    $name,
+    $lead,
+    $profile,
+    $palette,
+    $websiteStudy,
+    $intent,
+    $salesAngle,
+  );
+
+  return [
+    "company" => $name,
+    "area" => $profile["label"],
+    "summary" => "A oportunidade principal aqui é {$intent}. Para este caso, o MVP precisa comunicar valor rápido, explicar o serviço com clareza e levar o visitante para um contato direto sem fricção.",
+    "siteSummary" => $siteSummary,
+    "visualDirection" => $visualDirection,
+    "deliveryView" => inferSalesExplanation($type, $website !== ""),
+    "references" => $profile["references"],
+    "palette" => $palette,
+    "prompt" => $prompt,
+  ];
+}
+
+function resolveStudyProfile(string $type): array
+{
+  $profiles = [
+    "restaurant" => [
+      "label" => "restaurante e alimentação",
+      "audience" => "pessoas que querem entender rapidamente o cardápio, a proposta da casa e como pedir ou reservar",
+      "goal" => "gerar pedidos, reservas ou conversas no WhatsApp",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#B45309", "role" => "CTA e destaques"],
+        ["label" => "Apoio", "hex" => "#7C2D12", "role" => "blocos e ícones"],
+        ["label" => "Superfície", "hex" => "#FFF7ED", "role" => "fundos suaves"],
+        ["label" => "Texto", "hex" => "#1C1917", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Sweetgreen", "url" => "https://www.sweetgreen.com/", "reason" => "boa hierarquia entre produto, marca e CTA"],
+        ["name" => "Shake Shack", "url" => "https://shakeshack.com/", "reason" => "apresentação simples e conversão rápida"],
+        ["name" => "Nando's", "url" => "https://www.nandos.co.uk/", "reason" => "uso controlado de cor e navegação direta"],
+      ],
+    ],
+    "health" => [
+      "label" => "saúde e atendimento clínico",
+      "audience" => "pessoas buscando confiança, clareza sobre serviços e uma forma simples de agendar",
+      "goal" => "gerar agendamentos e contatos qualificados",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#0F766E", "role" => "CTA e confiança"],
+        ["label" => "Apoio", "hex" => "#155E75", "role" => "ícones e seções"],
+        ["label" => "Superfície", "hex" => "#F0FDFA", "role" => "fundos suaves"],
+        ["label" => "Texto", "hex" => "#0F172A", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "One Medical", "url" => "https://www.onemedical.com/", "reason" => "tom confiável e comunicação simples"],
+        ["name" => "Zocdoc", "url" => "https://www.zocdoc.com/", "reason" => "clareza na jornada de agendamento"],
+        ["name" => "Cleveland Clinic", "url" => "https://my.clevelandclinic.org/", "reason" => "boa organização de informação sensível"],
+      ],
+    ],
+    "lawyer" => [
+      "label" => "serviços jurídicos",
+      "audience" => "pessoas ou empresas que precisam entender especialidades, confiança e caminho de contato",
+      "goal" => "captar contatos qualificados e transmitir autoridade",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#1D4ED8", "role" => "CTA e destaques"],
+        ["label" => "Apoio", "hex" => "#1E293B", "role" => "áreas institucionais"],
+        ["label" => "Superfície", "hex" => "#F8FAFC", "role" => "fundos limpos"],
+        ["label" => "Texto", "hex" => "#0F172A", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Cooley", "url" => "https://www.cooley.com/", "reason" => "institucional moderno sem excesso"],
+        ["name" => "WilmerHale", "url" => "https://www.wilmerhale.com/", "reason" => "boa hierarquia e tom sério"],
+        ["name" => "Latham", "url" => "https://www.lw.com/", "reason" => "estrutura confiável e objetiva"],
+      ],
+    ],
+    "pharmacy" => [
+      "label" => "farmácia e conveniência em saúde",
+      "audience" => "clientes que querem agilidade, localização clara e uma forma simples de atendimento",
+      "goal" => "facilitar pedidos e atendimento rápido",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#059669", "role" => "CTA e destaques"],
+        ["label" => "Apoio", "hex" => "#0F766E", "role" => "seções de apoio"],
+        ["label" => "Superfície", "hex" => "#ECFDF5", "role" => "fundos suaves"],
+        ["label" => "Texto", "hex" => "#111827", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "CVS", "url" => "https://www.cvs.com/", "reason" => "clareza na organização e utilidade"],
+        ["name" => "Walgreens", "url" => "https://www.walgreens.com/", "reason" => "estrutura prática para necessidade imediata"],
+        ["name" => "Boots", "url" => "https://www.boots.com/", "reason" => "boa mistura entre serviço e produto"],
+      ],
+    ],
+    "car_repair" => [
+      "label" => "oficina e serviços automotivos",
+      "audience" => "motoristas que precisam confiar rápido, entender serviços e pedir orçamento",
+      "goal" => "gerar pedidos de orçamento e contatos diretos",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#DC2626", "role" => "CTA e alertas leves"],
+        ["label" => "Apoio", "hex" => "#1F2937", "role" => "bases visuais"],
+        ["label" => "Superfície", "hex" => "#F9FAFB", "role" => "fundos limpos"],
+        ["label" => "Texto", "hex" => "#111827", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Midas", "url" => "https://www.midas.com/", "reason" => "serviços claros e CTA rápido"],
+        ["name" => "Meineke", "url" => "https://www.meineke.com/", "reason" => "estrutura direta para orçamento"],
+        ["name" => "Jiffy Lube", "url" => "https://www.jiffylube.com/", "reason" => "boa comunicação de serviço local"],
+      ],
+    ],
+    "clothing_store" => [
+      "label" => "varejo de moda",
+      "audience" => "clientes que querem entender a coleção, ver diferenciais e pedir atendimento rápido",
+      "goal" => "apresentar produtos e gerar contato comercial",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#7C3AED", "role" => "destaques moderados"],
+        ["label" => "Apoio", "hex" => "#374151", "role" => "estrutura"],
+        ["label" => "Superfície", "hex" => "#FAFAFA", "role" => "fundos limpos"],
+        ["label" => "Texto", "hex" => "#111827", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Everlane", "url" => "https://www.everlane.com/", "reason" => "produto e marca bem equilibrados"],
+        ["name" => "Aritzia", "url" => "https://www.aritzia.com/", "reason" => "boa apresentação de coleção"],
+        ["name" => "COS", "url" => "https://www.cos.com/", "reason" => "visual contido e sofisticado"],
+      ],
+    ],
+    "lodging" => [
+      "label" => "hotelaria e hospedagem",
+      "audience" => "pessoas que querem visualizar quartos, localização e reservar com facilidade",
+      "goal" => "gerar reservas diretas e contatos rápidos",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#0F766E", "role" => "CTA e identidade"],
+        ["label" => "Apoio", "hex" => "#1E293B", "role" => "blocos informativos"],
+        ["label" => "Superfície", "hex" => "#F8FAFC", "role" => "fundos claros"],
+        ["label" => "Texto", "hex" => "#0F172A", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Ace Hotel", "url" => "https://acehotel.com/", "reason" => "boa atmosfera sem perder clareza"],
+        ["name" => "Nobis Hotel", "url" => "https://www.nobishotel.com/", "reason" => "luxo contido e navegação simples"],
+        ["name" => "The Hoxton", "url" => "https://thehoxton.com/", "reason" => "conteúdo forte com boa conversão"],
+      ],
+    ],
+    "beauty_salon" => [
+      "label" => "beleza e estética",
+      "audience" => "clientes que procuram confiança visual, serviços claros e agendamento fácil",
+      "goal" => "gerar agendamentos e recorrência",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#DB2777", "role" => "CTA e destaques"],
+        ["label" => "Apoio", "hex" => "#7C2D12", "role" => "blocos e contraste"],
+        ["label" => "Superfície", "hex" => "#FFF1F2", "role" => "fundos suaves"],
+        ["label" => "Texto", "hex" => "#1F2937", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Drybar", "url" => "https://www.drybar.com/", "reason" => "apresentação de serviço direta"],
+        ["name" => "Glossier", "url" => "https://www.glossier.com/", "reason" => "uso equilibrado de visual e marca"],
+        ["name" => "Treatwell", "url" => "https://www.treatwell.com/", "reason" => "foco em serviço e agendamento"],
+      ],
+    ],
+    "accounting" => [
+      "label" => "contabilidade e consultoria",
+      "audience" => "empresas que precisam entender o serviço, confiar no time e pedir contato",
+      "goal" => "gerar leads mais qualificados",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#2563EB", "role" => "CTA e confiança"],
+        ["label" => "Apoio", "hex" => "#0F172A", "role" => "bases institucionais"],
+        ["label" => "Superfície", "hex" => "#F8FAFC", "role" => "fundos limpos"],
+        ["label" => "Texto", "hex" => "#111827", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Pilot", "url" => "https://pilot.com/", "reason" => "explica serviço complexo com clareza"],
+        ["name" => "Bench", "url" => "https://www.bench.co/", "reason" => "boa proposta de valor e CTA"],
+        ["name" => "Xero", "url" => "https://www.xero.com/", "reason" => "equilíbrio entre confiança e simplicidade"],
+      ],
+    ],
+    "pet_store" => [
+      "label" => "pet shop e cuidados pet",
+      "audience" => "tutores que querem entender serviços, produtos e contato rápido",
+      "goal" => "gerar pedidos e agendamentos",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#EA580C", "role" => "CTA e destaques"],
+        ["label" => "Apoio", "hex" => "#0F766E", "role" => "apoio visual"],
+        ["label" => "Superfície", "hex" => "#FFF7ED", "role" => "fundos suaves"],
+        ["label" => "Texto", "hex" => "#1F2937", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "BarkBox", "url" => "https://barkbox.com/", "reason" => "tom acessível e visual simpático"],
+        ["name" => "Chewy", "url" => "https://www.chewy.com/", "reason" => "boa organização de oferta"],
+        ["name" => "Petco", "url" => "https://www.petco.com/", "reason" => "estrutura de serviço e produto"],
+      ],
+    ],
+    "gym" => [
+      "label" => "academia e fitness",
+      "audience" => "pessoas interessadas em planos, estrutura e uma primeira conversa rápida",
+      "goal" => "gerar matrículas e aulas experimentais",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#2563EB", "role" => "CTA e energia"],
+        ["label" => "Apoio", "hex" => "#111827", "role" => "estrutura"],
+        ["label" => "Superfície", "hex" => "#F8FAFC", "role" => "fundos limpos"],
+        ["label" => "Texto", "hex" => "#0F172A", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Equinox", "url" => "https://www.equinox.com/", "reason" => "boa apresentação aspiracional com clareza"],
+        ["name" => "Barry's", "url" => "https://www.barrys.com/", "reason" => "forte conversão com identidade visual controlada"],
+        ["name" => "Peloton", "url" => "https://www.onepeloton.com/", "reason" => "boa composição entre conteúdo e CTA"],
+      ],
+    ],
+    "supermarket" => [
+      "label" => "supermercado e varejo alimentar",
+      "audience" => "clientes que querem ver ofertas, localização e formas rápidas de atendimento",
+      "goal" => "gerar visitas, pedidos e recorrência",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#16A34A", "role" => "CTA e promoções"],
+        ["label" => "Apoio", "hex" => "#166534", "role" => "apoio visual"],
+        ["label" => "Superfície", "hex" => "#F0FDF4", "role" => "fundos suaves"],
+        ["label" => "Texto", "hex" => "#111827", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Whole Foods", "url" => "https://www.wholefoodsmarket.com/", "reason" => "boa organização de informação comercial"],
+        ["name" => "Publix", "url" => "https://www.publix.com/", "reason" => "ofertas e estrutura simples"],
+        ["name" => "Mercadona", "url" => "https://www.mercadona.es/", "reason" => "comunicação objetiva e direta"],
+      ],
+    ],
+    "design" => [
+      "label" => "design, comunicação visual e impressão",
+      "audience" => "clientes que precisam entender rápido os serviços, ver credibilidade e pedir orçamento",
+      "goal" => "gerar pedidos de orçamento e conversas qualificadas",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#F97316", "role" => "CTA e destaques"],
+        ["label" => "Apoio", "hex" => "#111827", "role" => "bases e contraste"],
+        ["label" => "Superfície", "hex" => "#FFF7ED", "role" => "fundos suaves"],
+        ["label" => "Texto", "hex" => "#0F172A", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Pentagram", "url" => "https://www.pentagram.com/", "reason" => "apresentação clara de portfólio e marca"],
+        ["name" => "Instrument", "url" => "https://www.instrument.com/", "reason" => "visual forte sem exagero gratuito"],
+        ["name" => "COLLINS", "url" => "https://www.wearecollins.com/", "reason" => "narrativa visual bem resolvida"],
+      ],
+    ],
+    "technology" => [
+      "label" => "tecnologia e software",
+      "audience" => "empresas ou usuários que precisam entender rápido o produto e a proposta de valor",
+      "goal" => "gerar demonstrações, testes ou contatos comerciais",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#2563EB", "role" => "CTA e destaques"],
+        ["label" => "Apoio", "hex" => "#0F172A", "role" => "base institucional"],
+        ["label" => "Superfície", "hex" => "#F8FAFC", "role" => "fundos limpos"],
+        ["label" => "Texto", "hex" => "#111827", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Vercel", "url" => "https://vercel.com/", "reason" => "clareza de produto e estrutura moderna"],
+        ["name" => "Linear", "url" => "https://linear.app/", "reason" => "MVP visualmente forte e contido"],
+        ["name" => "Framer", "url" => "https://www.framer.com/", "reason" => "boa hierarquia e CTA"],
+      ],
+    ],
+    "generic" => [
+      "label" => "serviços locais e negócios de atendimento",
+      "audience" => "clientes que precisam entender a empresa rápido e encontrar um canal claro de contato",
+      "goal" => "gerar conversas comerciais e pedidos de orçamento",
+      "palette" => [
+        ["label" => "Primária", "hex" => "#F97316", "role" => "CTA e destaques"],
+        ["label" => "Apoio", "hex" => "#111827", "role" => "estrutura"],
+        ["label" => "Superfície", "hex" => "#F8FAFC", "role" => "fundos limpos"],
+        ["label" => "Texto", "hex" => "#0F172A", "role" => "legibilidade"],
+      ],
+      "references" => [
+        ["name" => "Stripe", "url" => "https://stripe.com/", "reason" => "clareza na proposta de valor"],
+        ["name" => "Square", "url" => "https://squareup.com/", "reason" => "boa estrutura comercial"],
+        ["name" => "Mailchimp", "url" => "https://mailchimp.com/", "reason" => "marketing visual sem exagero"],
+      ],
+    ],
+  ];
+
+  $aliases = [
+    "doctor" => "health",
+    "dentist" => "health",
+    "drafting_service" => "design",
+    "advertising_agency" => "design",
+    "banner_store" => "design",
+    "graphic_designer" => "design",
+    "commercial_printer" => "design",
+    "digital_printer" => "design",
+    "print_shop" => "design",
+    "digital_printing_service" => "design",
+    "vinyl_sign_shop" => "design",
+    "software_company" => "technology",
+    "computer_store" => "technology",
+    "electronics_store" => "technology",
+  ];
+
+  $profileKey = $aliases[$type] ?? $type;
+
+  return $profiles[$profileKey] ?? $profiles["generic"];
+}
+
+function analyzeLeadWebsite(string $website): array
+{
+  $normalized = normalizeWebsiteUrl($website);
+  if ($normalized === "") {
+    return [
+      "available" => false,
+      "source" => "",
+      "title" => "",
+      "description" => "",
+      "colors" => [],
+    ];
+  }
+
+  try {
+    $html = httpGetText($normalized);
+  } catch (Throwable $e) {
+    error_log(
+      sprintf(
+        '[LeadMapper] Nao foi possivel analisar website "%s": %s',
+        $normalized,
+        $e->getMessage(),
+      ),
+    );
+
+    return [
+      "available" => false,
+      "source" => $normalized,
+      "title" => "",
+      "description" => "",
+      "colors" => [],
+    ];
+  }
+
+  return [
+    "available" => true,
+    "source" => $normalized,
+    "title" => fixMojibake(extractHtmlTitle($html)),
+    "description" => fixMojibake(extractMetaDescription($html)),
+    "colors" => extractDominantHexColors($html),
+  ];
+}
+
+function normalizeWebsiteUrl(string $website): string
+{
+  $value = trim($website);
+  if ($value === "") {
+    return "";
+  }
+
+  if (!preg_match('~^https?://~i', $value)) {
+    $value = "https://" . $value;
+  }
+
+  return $value;
+}
+
+function buildStudyPalette(array $observedColors, array $fallbackPalette): array
+{
+  $palette = $fallbackPalette;
+
+  if (!empty($observedColors[0])) {
+    $palette[0]["hex"] = $observedColors[0];
+  }
+
+  if (!empty($observedColors[1])) {
+    $palette[1]["hex"] = $observedColors[1];
+  }
+
+  return $palette;
+}
+
+function buildWebsiteStudySummary(array $websiteStudy, bool $hasWebsite): string
+{
+  if (!$hasWebsite) {
+    return "Não foi identificado um website ativo no lead. Para este estudo, o MVP deve partir do zero com foco em explicar a empresa, mostrar serviços e abrir um caminho claro para contato.";
+  }
+
+  if (!$websiteStudy["available"]) {
+    return "O lead possui website informado, mas não foi possível analisar a página automaticamente agora. Ainda assim, faz sentido preparar um MVP com estrutura enxuta, mais clara e orientada à conversão.";
+  }
+
+  $parts = ["Foi possível observar um website ativo como ponto de referência."];
+
+  if ($websiteStudy["title"] !== "") {
+    $parts[] = "Título observado: {$websiteStudy["title"]}.";
+  }
+
+  if ($websiteStudy["description"] !== "") {
+    $parts[] = "Resumo aparente da página: {$websiteStudy["description"]}.";
+  }
+
+  if ($websiteStudy["colors"] !== []) {
+    $parts[] = "Também foi possível identificar algumas cores presentes no site atual, o que ajuda a manter alguma familiaridade visual sem exagerar na paleta.";
+  }
+
+  return implode(" ", $parts);
+}
+
+function buildVisualDirectionSummary(array $websiteStudy, array $palette, array $profile): string
+{
+  $primary = $palette[0]["hex"] ?? "#F97316";
+  $support = $palette[1]["hex"] ?? "#111827";
+
+  if ($websiteStudy["colors"] !== []) {
+    return "A direção visual pode aproveitar a leitura do site atual usando {$primary} como cor principal e {$support} como apoio, sempre com bastante respiro, fundo claro e contraste forte para não exagerar nem parecer poluído.";
+  }
+
+  return "Como não há leitura visual forte do site atual, a recomendação é seguir uma paleta contida e funcional, com {$primary} para CTA e {$support} para estrutura, mantendo aparência profissional, moderna e fácil de vender como MVP.";
+}
+
+function buildStudyPrompt(
+  string $companyName,
+  array $lead,
+  array $profile,
+  array $palette,
+  array $websiteStudy,
+  string $intent,
+  string $salesAngle,
+): string {
+  $referenceLines = array_map(
+    static fn(array $item): string =>
+      "- {$item["name"]}: {$item["url"]} ({$item["reason"]})",
+    $profile["references"],
+  );
+  $paletteLines = array_map(
+    static fn(array $item): string =>
+      "- {$item["label"]}: {$item["hex"]} para {$item["role"]}",
+    $palette,
+  );
+  $siteNotes = [];
+  if (!empty($websiteStudy["title"])) {
+    $siteNotes[] = "Título observado no site atual: {$websiteStudy["title"]}";
+  }
+  if (!empty($websiteStudy["description"])) {
+    $siteNotes[] = "Descrição observada no site atual: {$websiteStudy["description"]}";
+  }
+  if ($siteNotes === []) {
+    $siteNotes[] = "Não dependa de um site atual forte; assuma que o MVP precisa organizar melhor a apresentação da empresa desde o começo.";
+  }
+
+  return fixMojibake(implode("\n", [
+    "Você é um desenvolvedor frontend sênior preparando um MVP de landing page demonstrativa com mentalidade de produto e conversão.",
+    "",
+    "Contexto do projeto:",
+    "- Empresa: {$companyName}",
+    "- Área de atuação: {$profile["label"]}",
+    "- Público principal: {$profile["audience"]}",
+    "- Objetivo de negócio: {$intent}",
+    "- Entrega sugerida: {$salesAngle}",
+    "- Meta do MVP: {$profile["goal"]}",
+    "",
+    "Leitura de negócio:",
+    ...array_map(static fn(string $item): string => "- {$item}", $siteNotes),
+    "- A landing page deve explicar de forma clara quem é a empresa, o que ela oferece, por que ela é confiável e como o cliente entra em contato.",
+    "- Faça sentido comercial antes de tentar parecer sofisticado demais.",
+    "",
+    "Direção visual:",
+    "- Use uma estética moderna, sóbria e vendável.",
+    "- Evite cores exageradas, gradientes pesados, efeitos chamativos ou UI com cara de template genérico.",
+    "- Trabalhe com hierarquia visual forte, bastante respiro e contraste limpo.",
+    ...$paletteLines,
+    "",
+    "Estrutura esperada do MVP:",
+    "- Hero com proposta de valor clara, subtítulo humano e CTA principal para WhatsApp/orçamento.",
+    "- Seção sobre a empresa explicando rapidamente credibilidade, posicionamento e diferenciais.",
+    "- Seção de serviços principais com cards objetivos.",
+    "- Seção de prova social com placeholders de depoimentos, logos ou cases.",
+    "- Seção visual mostrando como o serviço se apresenta na prática.",
+    "- FAQ curto com objeções comuns.",
+    "- CTA final forte e rodapé simples.",
+    "",
+    "Regras importantes do MVP:",
+    "- Trate isso explicitamente como MVP: nada de área logada, dashboard, fluxo complexo ou funcionalidades irreais.",
+    "- Onde faltarem ativos reais, use placeholders explícitos como [Placeholder: foto da equipe], [Placeholder: imagem do serviço], [Placeholder: mockup da entrega], [Placeholder: fachada ou ambiente].",
+    "- A copy precisa soar humana, comercial e específica para a área, sem parecer texto de IA genérico.",
+    "- Priorize responsividade desktop/mobile.",
+    "- O resultado deve ser uma landing page demonstrativa que sirva bem para apresentar a ideia ao cliente.",
+    "",
+    "Sites de referência para direção estrutural:",
+    ...$referenceLines,
+    "",
+    "Entrega esperada:",
+    "- Gere a landing page completa do MVP com foco em frontend.",
+    "- Se precisar inventar conteúdo visual, mantenha placeholders claros em vez de fingir imagens finais.",
+    "- Pense e execute como um dev frontend sênior montando algo enxuto, convincente e pronto para demonstração.",
+  ]));
+}
+
+function httpGetText(string $url): string
+{
+  $context = stream_context_create([
+    "http" => [
+      "method" => "GET",
+      "timeout" => 12,
+      "ignore_errors" => true,
+      "header" => "User-Agent: LeadMapper/1.0\r\nAccept: text/html,*/*;q=0.8\r\n",
+    ],
+    "ssl" => [
+      "verify_peer" => false,
+      "verify_peer_name" => false,
+    ],
+  ]);
+
+  $raw = @file_get_contents($url, false, $context);
+  if ($raw === false || trim($raw) === "") {
+    throw new RuntimeException("Falha ao carregar o website informado.");
+  }
+
+  $converted = @mb_convert_encoding($raw, "UTF-8", "UTF-8, ISO-8859-1, Windows-1252");
+
+  return is_string($converted) && $converted !== "" ? $converted : $raw;
+}
+
+function extractHtmlTitle(string $html): string
+{
+  if (!preg_match('/<title[^>]*>(.*?)<\/title>/is', $html, $matches)) {
+    return "";
+  }
+
+  return html_entity_decode(trim(strip_tags($matches[1])), ENT_QUOTES | ENT_HTML5, "UTF-8");
+}
+
+function extractMetaDescription(string $html): string
+{
+  if (
+    !preg_match(
+      '/<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']/is',
+      $html,
+      $matches,
+    ) &&
+    !preg_match(
+      '/<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']description["\']/is',
+      $html,
+      $matches,
+    )
+  ) {
+    return "";
+  }
+
+  return html_entity_decode(trim($matches[1]), ENT_QUOTES | ENT_HTML5, "UTF-8");
+}
+
+function extractDominantHexColors(string $html): array
+{
+  preg_match_all('/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/', $html, $matches);
+  if (empty($matches[0])) {
+    return [];
+  }
+
+  $ignored = ["#FFFFFF", "#FFF", "#000000", "#000", "#111111", "#F8F8F8", "#F5F5F5"];
+  $counts = [];
+  foreach ($matches[0] as $color) {
+    $normalized = normalizeHexColor($color);
+    if ($normalized === "" || in_array($normalized, $ignored, true)) {
+      continue;
+    }
+
+    $counts[$normalized] = ($counts[$normalized] ?? 0) + 1;
+  }
+
+  arsort($counts);
+
+  return array_slice(array_keys($counts), 0, 4);
+}
+
+function normalizeHexColor(string $value): string
+{
+  $color = strtoupper(trim($value));
+  if (!preg_match('/^#([0-9A-F]{3}|[0-9A-F]{6})$/', $color)) {
+    return "";
+  }
+
+  if (strlen($color) === 4) {
+    return sprintf(
+      "#%s%s%s%s%s%s",
+      $color[1],
+      $color[1],
+      $color[2],
+      $color[2],
+      $color[3],
+      $color[3],
+    );
+  }
+
+  return $color;
+}
+
 function buildProposal(array $lead, string $brand = "syncforge"): string
 {
   $name = (string) ($lead["name"] ?? "sua empresa");
-  $intent = mb_strtolower(
-    (string) ($lead["intent"] ?? "aumentar a conversão digital"),
+  $intent = cleanProposalFragment(
+    mb_strtolower((string) ($lead["intent"] ?? "aumentar a conversão digital")),
   );
-  $categoryLabel = mb_strtolower(
-    (string) ($lead["categoryLabel"] ?? "empresa"),
-  );
-  $salesAngle = mb_strtolower(
-    (string) ($lead["salesAngle"] ?? "uma estrutura digital mais eficiente"),
+  $salesAngle = cleanProposalFragment(
+    mb_strtolower(
+      (string) ($lead["salesAngle"] ?? "criar uma estrutura digital mais eficiente"),
+    ),
   );
   $hasWebsite = !empty($lead["website"]);
+  $type = (string) ($lead["category"] ?? "all");
+  $salesExplanation = inferSalesExplanation($type, $hasWebsite);
 
   $brands = [
     "dg" => [
@@ -411,19 +1094,21 @@ function buildProposal(array $lead, string $brand = "syncforge"): string
 
   $selectedBrand = $brands[$brand] ?? $brands["syncforge"];
 
-  $intro = "Oi, tudo bem? Aqui é da {$selectedBrand["name"]}. Nós {$selectedBrand["presentation"]}";
+  $intro = "Oi, tudo bem? Me chamo Davi Peterson e faço parte da equipe da {$selectedBrand["name"]}.";
 
-  $opening = "Dei uma olhada rápida na presença digital da {$name} e achei que valia te chamar porque existe uma boa oportunidade de {$intent}.";
+  $opening = "Nós {$selectedBrand["presentation"]}";
+
+  $context = "Dei uma olhada rápida na presença digital da {$name} e achei que valia te chamar porque existe uma boa oportunidade de {$intent}.";
 
   $problem = $hasWebsite
     ? "Vi que vocês já têm presença online, o que é ótimo. Mesmo assim, ainda dá para deixar essa estrutura mais alinhada para transformar visita em contato e contato em oportunidade real."
-    : "Hoje muita empresa do segmento de {$categoryLabel} ainda depende só de indicação, Instagram ou busca local. Quando não existe uma estrutura própria bem organizada, muita oportunidade boa acaba se perdendo no caminho.";
+    : "Hoje muitas empresas ainda dependem só de indicação, Instagram ou busca local. Quando não existe uma estrutura própria bem organizada, muita oportunidade boa acaba se perdendo no caminho.";
 
   $market = "Principalmente nesse tipo de negócio, a pessoa normalmente decide rápido. Se encontra uma comunicação clara, confiança e um caminho simples para falar no WhatsApp, a chance de converter aumenta bastante.";
 
   $solution = "Pensando nisso, a ideia seria {$salesAngle}, de um jeito simples, direto e com foco comercial de verdade.";
 
-  $details = "A proposta é organizar melhor a apresentação da empresa, destacar os diferenciais certos e facilitar o contato de quem já chega com interesse.";
+  $details = $salesExplanation;
 
   $cta = "Se fizer sentido, eu posso te mostrar uma ideia inicial pensada para {$name}, sem compromisso, para você visualizar como isso poderia funcionar na prática.";
 
@@ -433,6 +1118,7 @@ function buildProposal(array $lead, string $brand = "syncforge"): string
     implode("\n\n", [
       $intro,
       $opening,
+      $context,
       $problem,
       $market,
       $solution,
@@ -805,14 +1491,17 @@ function httpGetJson(string $url): array
 
     .panel-header h2,
     .proposal-head h2,
+    .study-head h2,
     .guide-card h2,
-    .guide-card h3 {
+    .guide-card h3,
+    .study-card h3 {
       margin: 0;
       color: var(--text);
     }
 
     .panel-header p,
     .proposal-meta,
+    .study-meta,
     .guide-card p,
     .guide-list {
       color: #5f5f5f;
@@ -998,6 +1687,93 @@ function httpGetJson(string $url): array
       margin: 0 0 16px;
     }
 
+    .study-card {
+      padding: 18px;
+      color: var(--text);
+    }
+
+    .study-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: flex-start;
+      padding-bottom: 18px;
+      border-bottom: 1px solid #ececec;
+    }
+
+    .study-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .study-actions .secondary-btn {
+      width: auto;
+      padding: 0 16px;
+    }
+
+    .study-body {
+      padding-top: 22px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .study-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .study-block {
+      padding: 18px;
+      border-radius: 16px;
+      background: var(--surface-muted);
+      border: 1px solid #ececec;
+    }
+
+    .study-block.full {
+      grid-column: 1 / -1;
+    }
+
+    .study-block p,
+    .study-block li {
+      color: #444444;
+      line-height: 1.7;
+    }
+
+    .study-block p {
+      margin: 12px 0 0;
+    }
+
+    .study-block ul {
+      margin: 12px 0 0;
+      padding-left: 18px;
+    }
+
+    .palette-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .palette-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .palette-swatch {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      flex-shrink: 0;
+    }
+
+    .palette-copy {
+      font-size: 12px;
+      color: #6b7280;
+    }
+
     .guide-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1064,6 +1840,8 @@ function httpGetJson(string $url): array
       }
 
       .proposal-head,
+      .study-head,
+      .study-actions,
       .proposal-actions,
       .result-actions,
       .guide-grid {
@@ -1071,7 +1849,8 @@ function httpGetJson(string $url): array
       }
 
       .result-grid,
-      .guide-grid {
+      .guide-grid,
+      .study-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -1164,6 +1943,7 @@ function httpGetJson(string $url): array
         <div class="tabs">
           <button class="tab active" type="button" data-tab="results">Empresas</button>
           <button class="tab" type="button" data-tab="proposal">Proposta</button>
+          <button class="tab" type="button" data-tab="study">Estudo</button>
           <button class="tab" type="button" data-tab="guide">API Google</button>
         </div>
 
@@ -1206,6 +1986,31 @@ function httpGetJson(string $url): array
               </div>
             </header>
             <div id="proposalBody" class="proposal-body"></div>
+          </article>
+        </div>
+
+        <div class="panel" id="panel-study">
+          <div id="studyEmpty" class="empty-state">
+            <i class="ti ti-bulb" aria-hidden="true"></i>
+            <h3>Selecione uma empresa</h3>
+            <p>Depois clique em gerar estudo para montar um briefing com análise, referências e prompt de MVP.</p>
+          </div>
+          <div id="studyLoading" class="loading-state" hidden>
+            <div class="spinner" aria-hidden="true"></div>
+            <p>Estudando a empresa e preparando o prompt do MVP...</p>
+          </div>
+          <article id="studyCard" class="study-card" hidden>
+            <header class="study-head">
+              <div>
+                <h2 id="studyCompany"></h2>
+                <p id="studyMeta" class="study-meta"></p>
+              </div>
+              <div class="study-actions">
+                <button id="copyStudyPromptBtn" class="secondary-btn" type="button"><i class="ti ti-copy"
+                    aria-hidden="true"></i>Copiar prompt</button>
+              </div>
+            </header>
+            <div id="studyBody" class="study-body"></div>
           </article>
         </div>
 
@@ -1256,6 +2061,8 @@ function httpGetJson(string $url): array
       leads: [],
       selectedLead: null,
       proposalText: "",
+      studyData: null,
+      studyPrompt: "",
       proposalBrand: "syncforge",
       lastSource: "serpapi"
     };
@@ -1282,6 +2089,7 @@ function httpGetJson(string $url): array
       panels: {
         results: document.getElementById("panel-results"),
         proposal: document.getElementById("panel-proposal"),
+        study: document.getElementById("panel-study"),
         guide: document.getElementById("panel-guide")
       },
       proposalEmpty: document.getElementById("proposalEmpty"),
@@ -1291,6 +2099,13 @@ function httpGetJson(string $url): array
       proposalMeta: document.getElementById("proposalMeta"),
       proposalBody: document.getElementById("proposalBody"),
       copyProposalBtn: document.getElementById("copyProposalBtn"),
+      studyEmpty: document.getElementById("studyEmpty"),
+      studyLoading: document.getElementById("studyLoading"),
+      studyCard: document.getElementById("studyCard"),
+      studyCompany: document.getElementById("studyCompany"),
+      studyMeta: document.getElementById("studyMeta"),
+      studyBody: document.getElementById("studyBody"),
+      copyStudyPromptBtn: document.getElementById("copyStudyPromptBtn"),
       whatsAppBtn: document.getElementById("whatsAppBtn"),
       apiStatusDot: document.getElementById("apiStatusDot"),
       apiStatusLabel: document.getElementById("apiStatusLabel"),
@@ -1309,6 +2124,7 @@ function httpGetJson(string $url): array
       elements.searchForm.addEventListener("submit", onSearch);
       elements.exportBtn.addEventListener("click", exportCsv);
       elements.copyProposalBtn.addEventListener("click", copyProposal);
+      elements.copyStudyPromptBtn.addEventListener("click", copyStudyPrompt);
       elements.whatsAppBtn.addEventListener("click", openWhatsApp);
       elements.districtFilter.addEventListener("input", applyLocalFilters);
       elements.query.addEventListener("input", applyLocalFilters);
@@ -1394,6 +2210,8 @@ function httpGetJson(string $url): array
         state.lastSource = data.source || "serpapi";
         state.selectedLead = null;
         state.proposalText = "";
+        state.studyData = null;
+        state.studyPrompt = "";
         console.log("[LeadMapper] Resultado bruto da busca", {
           total: state.allLeads.length,
           source: state.lastSource,
@@ -1401,6 +2219,7 @@ function httpGetJson(string $url): array
         });
         applyLocalFilters();
         resetProposalView();
+        resetStudyView();
         activateTab("results");
       } catch (error) {
         console.error("[LeadMapper] Falha na busca", error);
@@ -1659,8 +2478,8 @@ function httpGetJson(string $url): array
             <button class="primary-btn" type="button" data-action="proposal" data-id="${escapeAttribute(lead.id)}">
               <i class="ti ti-sparkles" aria-hidden="true"></i>Gerar proposta
             </button>
-            <button class="secondary-btn" type="button" data-action="select" data-id="${escapeAttribute(lead.id)}">
-              <i class="ti ti-eye" aria-hidden="true"></i>Ver detalhes
+            <button class="secondary-btn" type="button" data-action="study" data-id="${escapeAttribute(lead.id)}">
+              <i class="ti ti-bulb" aria-hidden="true"></i>Gerar estudo
             </button>
           </div>
         </article>
@@ -1675,9 +2494,8 @@ function httpGetJson(string $url): array
       }
 
       state.selectedLead = lead;
-      if (action === "select") {
-        activateTab("proposal");
-        renderSelectedLeadPlaceholder();
+      if (action === "study") {
+        generateStudy(lead);
         return;
       }
 
@@ -1752,6 +2570,118 @@ function httpGetJson(string $url): array
       `;
     }
 
+    async function generateStudy(lead) {
+      activateTab("study");
+      elements.studyEmpty.hidden = true;
+      elements.studyCard.hidden = true;
+      elements.studyLoading.hidden = false;
+
+      console.log("[LeadMapper] Iniciando estudo da empresa", lead);
+
+      try {
+        const response = await fetch(`${apiBase}?api=study`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lead })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Não foi possível gerar o estudo.");
+        }
+
+        state.selectedLead = lead;
+        state.studyData = data.study || null;
+        state.studyPrompt = (data.study && data.study.prompt) || "";
+        console.log("[LeadMapper] Estudo gerado", state.studyData);
+        renderStudy(state.studyData);
+      } catch (error) {
+        console.error("[LeadMapper] Falha ao gerar estudo", error);
+        elements.studyLoading.hidden = true;
+        elements.studyEmpty.hidden = false;
+        elements.studyEmpty.innerHTML = `
+          <i class="ti ti-alert-triangle" aria-hidden="true"></i>
+          <h3>Falha ao gerar estudo</h3>
+          <p>${escapeHtml(error.message)}</p>
+        `;
+      }
+    }
+
+    function renderStudy(study) {
+      if (!study) {
+        resetStudyView();
+        return;
+      }
+
+      elements.studyLoading.hidden = true;
+      elements.studyCard.hidden = false;
+      elements.studyCompany.textContent = (state.selectedLead && state.selectedLead.name) || study.company || "Empresa";
+      elements.studyMeta.textContent = `${study.area || "Estudo"} - ${(state.selectedLead && state.selectedLead.phone) || "sem telefone"} - ${(state.selectedLead && state.selectedLead.address) || "Manaus"}`;
+      elements.studyBody.innerHTML = `
+        <div class="study-grid">
+          <section class="study-block">
+            <h3>Leitura do negocio</h3>
+            <p>${escapeHtml(study.summary || "")}</p>
+          </section>
+          <section class="study-block">
+            <h3>Estrutura atual</h3>
+            <p>${escapeHtml(study.siteSummary || "")}</p>
+          </section>
+          <section class="study-block">
+            <h3>Direcao visual</h3>
+            <p>${escapeHtml(study.visualDirection || "")}</p>
+          </section>
+          <section class="study-block">
+            <h3>Entrega sugerida</h3>
+            <p>${escapeHtml(study.deliveryView || "")}</p>
+          </section>
+          <section class="study-block">
+            <h3>Paleta sugerida</h3>
+            <div class="palette-list">${renderStudyPalette(study.palette || [])}</div>
+          </section>
+          <section class="study-block">
+            <h3>Referencias de estrutura</h3>
+            <ul>${renderStudyReferences(study.references || [])}</ul>
+          </section>
+          <section class="study-block full">
+            <h3>Prompt de MVP</h3>
+            <pre class="code-block">${escapeHtml(study.prompt || "")}</pre>
+          </section>
+        </div>
+      `;
+    }
+
+    function renderStudyPalette(palette) {
+      return palette.map((item) => `
+        <div class="palette-item">
+          <span class="palette-swatch" style="background:${escapeAttribute(item.hex || "#FFFFFF")}"></span>
+          <div>
+            <strong>${escapeHtml(item.label || "Cor")}</strong><br>
+            <span>${escapeHtml(item.hex || "")}</span><br>
+            <span class="palette-copy">${escapeHtml(item.role || "")}</span>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function renderStudyReferences(references) {
+      return references.map((item) => `
+        <li><a href="${escapeAttribute(item.url || "#")}" target="_blank" rel="noreferrer">${escapeHtml(item.name || "Referencia")}</a> - ${escapeHtml(item.reason || "")}</li>
+      `).join("");
+    }
+
+    function resetStudyView() {
+      state.studyData = null;
+      state.studyPrompt = "";
+      elements.studyLoading.hidden = true;
+      elements.studyCard.hidden = true;
+      elements.studyEmpty.hidden = false;
+      elements.studyEmpty.innerHTML = `
+        <i class="ti ti-bulb" aria-hidden="true"></i>
+        <h3>Selecione uma empresa</h3>
+        <p>Depois clique em gerar estudo para montar um briefing com análise, referências e prompt de MVP.</p>
+      `;
+    }
+
     function activateTab(tabName) {
       for (const tab of elements.tabs) {
         tab.classList.toggle("active", tab.dataset.tab === tabName);
@@ -1771,6 +2701,19 @@ function httpGetJson(string $url): array
       elements.copyProposalBtn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i>Copiado';
       setTimeout(() => {
         elements.copyProposalBtn.innerHTML = original;
+      }, 1600);
+    }
+
+    async function copyStudyPrompt() {
+      if (!state.studyPrompt) {
+        return;
+      }
+
+      await navigator.clipboard.writeText(state.studyPrompt);
+      const original = elements.copyStudyPromptBtn.innerHTML;
+      elements.copyStudyPromptBtn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i>Copiado';
+      setTimeout(() => {
+        elements.copyStudyPromptBtn.innerHTML = original;
       }, 1600);
     }
 
